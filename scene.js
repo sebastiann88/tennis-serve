@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { EXRLoader } from 'three/addons/loaders/EXRLoader.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
@@ -898,17 +899,35 @@ const actions = {};
 const animationNames = [];
 let currentAction = null;
 let currentIndex = -1;
+let tennisBall = null;
 
 const animationFiles = {
-  'Idle': 'ybot-idle.glb',
-  'Walk': 'ybot-walk.glb',
-  'Run': 'ybot-run.glb',
-  'Dance': 'ybot-dance.glb',
+  'Serve': 'serve.glb',
+  'Forehand': 'forehand.glb',
+  'Smash': 'smash.glb',
 };
 
+const dracoLoader = new DRACOLoader();
+dracoLoader.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/libs/draco/');
+
 const loader = new GLTFLoader();
+loader.setDRACOLoader(dracoLoader);
 loader.setPath('./glb/');
-loader.load('ybot.glb', (gltf) => {
+
+const allNames = Object.keys(animationFiles);
+let loaded = 0;
+const totalToLoad = allNames.length;
+
+function onAllLoaded() {
+  animationNames.length = 0;
+  animationNames.push(...allNames);
+  playAnimation(0);
+  buildAnimationUI();
+  document.getElementById('loading').classList.add('hidden');
+}
+
+// Load serve.glb first as the base model, then load remaining animations
+loader.load('serve.glb', (gltf) => {
   const model = gltf.scene;
 
   const paintedBaselineZ = baselineZ - (100 / 2048) * 23.77;
@@ -927,28 +946,36 @@ loader.load('ybot.glb', (gltf) => {
 
   scene.add(model);
 
+  tennisBall = model.getObjectByName('tennisball');
+
   mixer = new THREE.AnimationMixer(model);
 
-  const manager = new THREE.LoadingManager();
-  const animLoader = new GLTFLoader(manager);
-  animLoader.setPath('./glb/');
+  // Register the serve animation from the base model
+  if (gltf.animations.length > 0) {
+    const clip = gltf.animations[0];
+    actions['Serve'] = mixer.clipAction(clip);
+  }
+  loaded++;
+  if (loaded === totalToLoad) onAllLoaded();
 
+  // Load the remaining animation files
   for (const [name, file] of Object.entries(animationFiles)) {
-    animLoader.load(file, (animGltf) => {
-      const clip = animGltf.animations[0];
-      const action = mixer.clipAction(clip);
-      actions[name] = action;
-      animationNames.push(name);
+    if (name === 'Serve') continue;
+    loader.load(file, (animGltf) => {
+      if (animGltf.animations.length > 0) {
+        const clip = animGltf.animations[0];
+        actions[name] = mixer.clipAction(clip);
+      }
+      loaded++;
+      if (loaded === totalToLoad) onAllLoaded();
+    }, undefined, (err) => {
+      console.error(`Failed to load ${file}:`, err);
+      loaded++;
+      if (loaded === totalToLoad) onAllLoaded();
     });
   }
-
-  manager.onLoad = () => {
-    animationNames.length = 0;
-    animationNames.push('Idle', 'Walk', 'Run', 'Dance');
-    playAnimation(0);
-    buildAnimationUI();
-    document.getElementById('loading').classList.add('hidden');
-  };
+}, undefined, (err) => {
+  console.error('Failed to load serve.glb:', err);
 });
 
 function playAnimation(index) {
@@ -964,6 +991,7 @@ function playAnimation(index) {
 
   currentAction = action;
   currentIndex = index;
+  if (tennisBall) tennisBall.visible = (name === 'Serve');
   updateUIHighlight();
 }
 
